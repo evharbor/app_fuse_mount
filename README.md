@@ -2,5 +2,5 @@
 # python-fuse-sample
     python36 harbor_fuse.py /your/dir /mnt/point
 
-Requirment:
+# Requirment:
     pip3 install fusepy
