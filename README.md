@@ -4,3 +4,9 @@
 
 # Requirment:
     pip3 install fusepy
+    
+#相关研发资料
+    fusepy官方github地址：
+    https://github.com/fusepy/fusepy
+    官方研发的示例：
+    https://github.com/fusepy/fusepy/tree/master/examples
