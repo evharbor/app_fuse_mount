@@ -4,18 +4,32 @@
 import logging
 import os
 
+from time import time
+from stat import S_IFDIR, S_IFREG
 from errno import EACCES
 from os.path import realpath
 from threading import Lock
-from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
+from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
+
+import pyharbor
 
 class Harbor(LoggingMixIn, Operations):
-    def __init__(self, root):
-        self.root = realpath(root)
+    def __init__(self, args):
+        print('初始化文件系统, 示例把 / 映射到挂载目录')
+        self.bucket_name   = args.bucket_name
+        self.test_sys_root = realpath('/')
+        pyharbor.set_global_settings({    # 配置对象存储链接
+        'SCHEME': 'http',   # 或'https', 默认'https'
+        'DOMAIN_NAME': 'obs.casearth.cn', # 默认 'obs.casearth.cn'
+        'ACCESS_KEY': args.access_key,
+        'SECRET_KEY': args.secret_key,
+        })
+        self.harbor_client = pyharbor.get_client()
+
         self.rwlock = Lock()
 
     def __call__(self, op, path, *args):
-        return super(Harbor, self).__call__(op, self.root + path, *args)
+        return super(Harbor, self).__call__(op, self.test_sys_root + path, *args)
 
     def access(self, path, mode):
         if not os.access(path, mode):
@@ -37,15 +51,18 @@ class Harbor(LoggingMixIn, Operations):
             return os.fsync(fh)
 
     def getattr(self, path, fh=None):
-        st = os.lstat(path)
-        return dict((key, getattr(st, key)) for key in (
-            'st_atime', 'st_ctime', 'st_gid', 'st_mode', 'st_mtime',
-            'st_nlink', 'st_size', 'st_uid'))
+        uid, gid, pid = fuse_get_context()
+        if path == '/' or '//' == path:
+            st = dict(st_mode=(S_IFDIR | 0o755), st_nlink=2)
+        else:
+            st = dict(st_mode=(S_IFREG | 0o444), st_size=8888)
+        st['st_ctime'] = st['st_mtime'] = st['st_atime'] = time()
+        return st
 
     getxattr = None
 
     def link(self, target, source):
-        return os.link(self.root + source, target)
+        return os.link(self.test_sys_root + source, target)
 
     listxattr = None
     mkdir = os.mkdir
@@ -58,7 +75,14 @@ class Harbor(LoggingMixIn, Operations):
             return os.read(fh, size)
 
     def readdir(self, path, fh):
-        return ['.', '..'] + os.listdir(path)
+        return_list = ['.', '..']
+        this_dir = self.harbor_client.bucket(self.bucket_name).dir(path)
+        data, code, msg = this_dir.get_objs_and_subdirs()
+        if data:
+            objs = this_dir.get_objs(data)
+            for obj in objs:
+                return_list.append(obj['name'])
+        return return_list
 
     readlink = os.readlink
 
@@ -66,7 +90,7 @@ class Harbor(LoggingMixIn, Operations):
         return os.close(fh)
 
     def rename(self, old, new):
-        return os.rename(old, self.root + new)
+        return os.rename(old, self.test_sys_root + new)
 
     rmdir = os.rmdir
 
@@ -95,10 +119,12 @@ class Harbor(LoggingMixIn, Operations):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('root')
+    parser.add_argument('bucket_name')
     parser.add_argument('mount')
+    parser.add_argument('access_key')
+    parser.add_argument('secret_key')
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.DEBUG)
     fuse = FUSE(
-        Harbor(args.root), args.mount, foreground=True, allow_other=True)
+        Harbor(args), args.mount, foreground=True, allow_other=True)
